@@ -9,7 +9,7 @@ The infrastructure hosts a Java web application on Amazon EC2 instances running 
 AWS CloudFormation manages the infrastructure as code, while Amazon EC2 Auto Scaling and CloudWatch alarms provide CPU-based scaling policies.
 
 ## Architecture
-![AWS CloudFormation architecture](Architecture-1.png)
+![AWS Architecture](screenshots/Architecture.png)
 **Application request flow**
 
 User → Custom Domain → Route 53 / DNS → Application Load Balancer (HTTPS) → EC2 Instances running Apache Tomcat → Amazon RDS for MySQL
