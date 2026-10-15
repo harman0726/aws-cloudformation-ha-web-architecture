@@ -66,7 +66,7 @@ An internet-facing Application Load Balancer receives HTTPS traffic on port 443 
 The target group forwards HTTP traffic to Apache Tomcat on port 8080.
 
 The HTTPS listener uses an AWS Certificate Manager certificate.
-![Healthy ALB Targets](alb-healthy-targets.png)
+![Healthy ALB Targets](screenshots/alb-healthy-targets.png)
 
 ### 3. EC2 Application Deployment
 
@@ -121,7 +121,7 @@ Two CloudWatch alarms are configured to evaluate average CPU utilization over fi
 - The policy decreases capacity by one instance, subject to the Auto Scaling group's minimum capacity.
 
 The scaling policies are configured in CloudFormation. Successful scale-out and scale-in behavior should be documented separately if those events are tested.
-![Auto Scaling Configuration](autoscaling-policies.png)
+![Auto Scaling Configuration](screenshots/autoscaling-policies.png)
 
 ### 6. SNS Notifications
 
@@ -222,7 +222,7 @@ The following checks have been performed during project implementation:
 - The Auto Scaling group was configured with a minimum of two, desired capacity of two, and maximum of four instances.
 - CloudWatch CPU alarms and step-scaling policies were created.
 - The CloudFormation application stack reached `UPDATE_COMPLETE`.
-![Successful application login page](application-login.png)
+![Successful application login page](screenshots/application-login.png)
 
 Actual scale-out and scale-in events should only be reported as tested if the resulting instance-count changes were observed and verified.
 
