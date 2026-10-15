@@ -9,7 +9,6 @@ Parameters:
 
   NotificationEmail:
     Type: String
-    Default: ayanharman07@gmail.com
     Description: Email address to receive Auto Scaling notifications
 
 Resources:
