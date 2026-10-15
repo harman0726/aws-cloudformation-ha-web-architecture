@@ -1,0 +1,65 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Security groups for ALB, EC2 application servers, and RDS
+
+Resources:
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTPS traffic from the internet
+      VpcId: vpc-0b3eafd2a370c35d3
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: cfn-alb-sg
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow application traffic only from ALB
+      VpcId: vpc-0b3eafd2a370c35d3
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: cfn-ec2-sg
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow MySQL only from application servers
+      VpcId: vpc-0b3eafd2a370c35d3
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: cfn-rds-sg
+
+Outputs:
+  ALBSecurityGroupId:
+    Description: ALB security group ID
+    Value: !Ref ALBSecurityGroup
+    Export:
+      Name: cfn-alb-sg-id
+
+  EC2SecurityGroupId:
+    Description: EC2 application security group ID
+    Value: !Ref EC2SecurityGroup
+    Export:
+      Name: cfn-ec2-sg-id
+
+  RDSSecurityGroupId:
+    Description: RDS security group ID
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: cfn-rds-sg-id

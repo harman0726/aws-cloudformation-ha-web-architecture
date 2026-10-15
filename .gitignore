@@ -1,0 +1,25 @@
+# AWS credentials and configuration
+.aws/
+**/.aws/
+credentials
+config
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+*secret*
+*password*
+
+# Local logs and temporary files
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+ec2-console-log.txt

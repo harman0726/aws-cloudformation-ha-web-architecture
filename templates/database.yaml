@@ -1,0 +1,48 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Reference existing Terraform-managed RDS database
+
+Parameters:
+  ExistingDBEndpoint:
+    Type: String
+    Description: Endpoint of the existing tf-project2-mysql instance
+
+  ExistingDBSecretArn:
+    Type: String
+    Description: Secrets Manager ARN for the existing RDS credentials
+
+Resources: 
+  DatabaseReference:
+    Type: AWS::CloudFormation::WaitConditionHandle
+
+Outputs:
+  DatabaseEndpoint:
+    Description: Existing MySQL database endpoint
+    Value: !Ref ExistingDBEndpoint
+    Export:
+      Name: cfn-db-endpoint
+
+  DatabasePort:
+    Description: MySQL database port
+    Value: '3306'
+    Export:
+      Name: cfn-db-port
+
+  DatabaseName:
+    Description: Application database name
+    Value: jwt
+    Export:
+      Name: cfn-db-name
+
+  DatabaseUsername:
+    Description: Existing RDS master username
+    Value: dbadmin
+    Export:
+      Name: cfn-db-username
+
+  DatabaseSecretArn:
+    Description: Existing RDS credentials secret ARN
+    Value: !Ref ExistingDBSecretArn
+    Export:
+      Name: cfn-db-secret-arn
+

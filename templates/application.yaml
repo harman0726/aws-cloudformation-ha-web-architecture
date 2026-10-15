@@ -1,0 +1,316 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Application Load Balancer for the Project 2 Java web application
+
+Parameters:
+  CertificateArn:
+    Type: String
+    Default: arn:aws:acm:us-east-2:395459394365:certificate/80546ccb-e933-4e80-8367-20147bba96ab
+
+  NotificationEmail:
+    Type: String
+    Default: ayanharman07@gmail.com
+    Description: Email address to receive Auto Scaling notifications
+
+Resources:
+  AutoScalingNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: cfn-asg-notifications
+
+  AutoScalingEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AutoScalingNotificationTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: ALBAccessLogsBucketPolicy
+    Properties:
+      Name: cfn-alb
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Subnets:
+        - subnet-033a939edc43d3f26
+        - subnet-00b86da7dd23a9c7c
+      SecurityGroups:
+        - !ImportValue cfn-alb-sg-id
+      Tags:
+        - Key: Name
+          Value: cfn-alb
+      LoadBalancerAttributes:
+        - Key: access_logs.s3.enabled
+          Value: 'true'
+        - Key: access_logs.s3.bucket
+          Value: !Ref ALBAccessLogsBucket
+        - Key: access_logs.s3.prefix
+          Value: alb
+
+  ApplicationTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: cfn-app-tg
+      VpcId: vpc-0b3eafd2a370c35d3
+      Protocol: HTTP
+      Port: 8080
+      TargetType: instance
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: traffic-port
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: '200-399'
+      Tags:
+        - Key: Name
+          Value: cfn-app-tg
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ApplicationTargetGroup
+
+  ALBAccessLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'cfn-alb-access-logs-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ALBAccessLogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ALBAccessLogsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowALBAccessLogsRegionalAccount
+            Effect: Allow
+            Principal:
+              AWS: arn:aws:iam::033677994240:root
+            Action: s3:PutObject
+            Resource: !Sub '${ALBAccessLogsBucket.Arn}/alb/AWSLogs/${AWS::AccountId}/*'
+          - Sid: AllowALBAccessLogsService
+            Effect: Allow
+            Principal:
+              Service: logdelivery.elasticloadbalancing.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${ALBAccessLogsBucket.Arn}/alb/AWSLogs/${AWS::AccountId}/*'
+
+
+  EC2LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: cfn-app-launch-template
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+        InstanceType: t3.small
+        SecurityGroupIds:
+          - !ImportValue cfn-ec2-sg-id
+        MetadataOptions:
+          HttpTokens: required
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -euxo pipefail
+
+            dnf install -y java-17-amazon-corretto git maven jq --allowerasing
+
+            # Install Tomcat 9
+            TOMCAT_VERSION="9.0.122"
+            cd /tmp
+
+            curl -fL -o apache-tomcat-${!TOMCAT_VERSION}.tar.gz  \
+              "https://dlcdn.apache.org/tomcat/tomcat-9/v${!TOMCAT_VERSION}/bin/apache-tomcat-${!TOMCAT_VERSION}.tar.gz"
+
+            # Check if the file was downloaded successfully
+            tar -xzf apache-tomcat-${!TOMCAT_VERSION}.tar.gz
+            mv apache-tomcat-${!TOMCAT_VERSION} /opt/tomcat
+            rm apache-tomcat-${!TOMCAT_VERSION}.tar.gz
+
+
+            # Retrieve database credentials from Secrets Manager
+            SECRET_JSON=$(aws secretsmanager get-secret-value \
+              --secret-id 'arn:aws:secretsmanager:us-east-2:395459394365:secret:project2/rds/mysql-LmNIR6' \
+              --region us-east-2 \
+              --query SecretString \
+              --output text)
+
+            DB_USER=$(echo "$SECRET_JSON" | jq -r '.username')
+            DB_PASSWORD=$(echo "$SECRET_JSON" | jq -r '.password')
+            unset SECRET_JSON
+
+            # Configure environment variables for Tomcat
+            mkdir -p /opt/tomcat/bin
+            cat > /opt/tomcat/bin/setenv.sh <<EOF
+            export DB_HOST="tf-project2-mysql.cnu2wsciatwj.us-east-2.rds.amazonaws.com"
+            export DB_NAME="jwt"
+            export DB_USER="${!DB_USER}"
+            export DB_PASSWORD="${!DB_PASSWORD}"
+            EOF
+            chmod 600 /opt/tomcat/bin/setenv.sh
+
+            # Download and build the application
+            cd /opt
+            git clone https://github.com/harman0726/Aws-RDS-Java.git app-source
+            cd /opt/app-source
+            mvn -B clean package
+
+            # Run Tomcat as a systemd service
+            cat > /etc/systemd/system/tomcat.service <<'SERVICE'
+            [Unit]
+            Description=Apache Tomcat 9
+            After=network.target
+
+            [Service]
+            Type=forking
+            Environment=JAVA_HOME=/usr/lib/jvm/java-17-amazon-corretto
+            Environment=CATALINA_HOME=/opt/tomcat
+            Environment=CATALINA_BASE=/opt/tomcat
+            ExecStart=/opt/tomcat/bin/startup.sh
+            ExecStop=/opt/tomcat/bin/shutdown.sh
+            Restart=on-failure
+
+            [Install]
+            WantedBy=multi-user.target
+            SERVICE
+
+            cp target/LoginWebApp.war /opt/tomcat/webapps/LoginWebApp.war
+            systemctl daemon-reload
+            systemctl enable tomcat
+            systemctl start tomcat
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: cfn-ec2-app-profile
+      Roles:
+        - !Ref EC2ApplicationRole
+
+  ApplicationAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      NotificationConfigurations:
+        - TopicARN: arn:aws:sns:us-east-2:395459394365:cfn-asg-notifications
+          NotificationTypes:
+            - autoscaling:EC2_INSTANCE_LAUNCH
+            - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+            - autoscaling:EC2_INSTANCE_TERMINATE
+            - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+      AutoScalingGroupName: cfn-asg
+      MinSize: '2'
+      DesiredCapacity: '2'
+      MaxSize: '4'
+      VPCZoneIdentifier:
+        - subnet-0193bb8c49a8a2ad1
+        - subnet-0340547b97d444371
+      LaunchTemplate:
+        LaunchTemplateId: !Ref EC2LaunchTemplate
+        Version: !GetAtt EC2LaunchTemplate.LatestVersionNumber
+      TargetGroupARNs:
+        - !Ref ApplicationTargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      Tags:
+        - Key: Name
+          Value: cfn-app-instance
+          PropagateAtLaunch: true
+
+  ScaleOutPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref ApplicationAutoScalingGroup
+      PolicyType: StepScaling
+      AdjustmentType: ChangeInCapacity
+      MetricAggregationType: Average
+      EstimatedInstanceWarmup: 300
+      StepAdjustments:
+        - MetricIntervalLowerBound: 0
+          MetricIntervalUpperBound: 20
+          ScalingAdjustment: 1
+        - MetricIntervalLowerBound: 20
+          ScalingAdjustment: 2
+
+  ScaleInPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref ApplicationAutoScalingGroup
+      PolicyType: StepScaling
+      AdjustmentType: ChangeInCapacity
+      MetricAggregationType: Average
+      EstimatedInstanceWarmup: 300
+      StepAdjustments:
+        - MetricIntervalUpperBound: 0
+          ScalingAdjustment: -1
+
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: cfn-high-cpu-alarm
+      AlarmDescription: Alarm when CPU exceeds 70%
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref ApplicationAutoScalingGroup
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref ScaleOutPolicy
+
+  LowCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: cfn-low-cpu-alarm
+      AlarmDescription: Alarm when CPU falls below 30%
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref ApplicationAutoScalingGroup
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 30
+      ComparisonOperator: LessThanThreshold
+      AlarmActions:
+        - !Ref ScaleInPolicy
+
+  EC2ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: cfn-ec2-app-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cfn-read-rds-secret
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: arn:aws:secretsmanager:us-east-2:395459394365:secret:project2/rds/mysql-LmNIR6
+  
